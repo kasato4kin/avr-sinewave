@@ -1,3 +1,4 @@
+
 ; Testing SineWave generation using PWM
 ;
 ; Created: 11/6/2026 7:02:18 PM
@@ -8,7 +9,9 @@
 .def	temp = R16
 .def	tempH = R17
 
-;.equ
+; Note A = 440Hz
+; 8MHz / 440Hz = 18182 ticks / 128 = 142 (0x8E)
+.equ	freq = 0x8E
 
 ; ------------------ Program Code --------------------------------------------
 		.cseg
@@ -19,8 +22,7 @@ start:	rjmp	reset			; ??????? ?? ?????? ?????????
 		reti					; ??????? ?????????? 0
 		reti					; ??????? ?????????? 1
 		reti					; ??????/??????? 1, ??????
-		reti
-		;rjmp	t1cmpA			; ??????/??????? 1, ??????????, ????? ?
+		rjmp	t1cmpA			; Timer/Counter 1, Compare Channel A
 		reti					; ??????/??????? 1, ?????????? ?? ????????????
 		reti					; ??????/??????? 0, ?????????? ?? ????????????
 		reti					; ?????????? UART ????? ????????
@@ -42,28 +44,75 @@ reset:
 		ldi		temp, RAMEND
 		out		SPL, temp
 
-		; ????????????? ????? ??
-		; ???????? 14 ? 15
+		; Set PORT B to Output
+		; Pins 14 and 15
 		ldi		temp, (1<<PB3)|(1<<PB2)
 		out		PORTB, temp		
-		out		DDRB, temp		; ?? ?????
+		out		DDRB, temp
 
-		ldi		temp, 0x80		; ?????????? ???????????
+		ldi		temp, 0x80		; ACSR Off
 		out		ACSR, temp
 
-		; OCR1A <= 0x04E2 (1250)
-		ldi		temp, 0xE2
-		ldi		tempH, 0x04
+		; OCR1A <= freq
+		ldi		temp, low(freq)
+		ldi		tempH, high(freq)
 		out		OCR1AH, tempH
 		out		OCR1AL, temp
 
-		; T0 8-??? => Fast PWM, Top = 0xFF, Prescaler Off
-		ldi		temp, (0<<COM0A1)|(0<<COM0A0)|(0<<COM0B1)|(0<<COM0B0)|(1<<WGM01)|(1<<WGM00)
+		; Sine table values
+		ldi		ZL, low(sine*2)
+		ldi		ZH, high(sine*2)	; Can be deleted?
+
+		; Beginning of the table
+		mov		YL, ZL
+		mov		YH, ZH
+
+		;T1 16-bit Mode CTC, Top = OCR1A, Prescaler Off, Pin OC1A Off
+		ldi		temp, (0<<COM1A1)|(0<<COM1A0)|(0<<WGM11)|(0<<WGM10)
+		out		TCCR1A, temp
+
+		ldi		temp, (0<<WGM13)|(1<<WGM12)|(0<<CS12)|(0<<CS11)|(1<<CS10)
+		out		TCCR1B, temp
+
+		; T0 8-bit => Fast PWM, Top = OCR0A, Prescaler Off
+		ldi		temp, (1<<COM0A1)|(0<<COM0A0)|(1<<WGM01)|(1<<WGM00)
 		out		TCCR0A, temp
 
-		ldi		temp, (0<<WGM02)|(0<<CS02)|(0<<CS01)|(1<<CS00)
+		ldi		temp, (1<<WGM02)|(0<<CS02)|(0<<CS01)|(1<<CS00)
 		out		TCCR0B, temp
 
+		; Enabling Timer1 Channel A interruption
+		ldi		temp, (1<<OCIE1A)
+		out		TIMSK, temp
+
+		sei
 loop:
-    inc r16
-    rjmp start
+    
+    rjmp loop
+
+
+t1cmpA:
+
+	lpm		temp, Z+
+	cpi		temp, 0xFF		; If reached end 0xFF
+	breq	repeat
+	out		OCR0A, temp
+	rjmp	exit
+
+repeat:
+	mov		ZL, YL
+	mov		ZH, YH
+
+exit:	
+	reti
+
+; 128 values of Sine Wave
+sine:
+	.db		127, 133, 139, 145, 151, 157, 163, 169, 175, 181, 186, 192, 197, 202, 207, 212
+	.db		216, 221, 225, 229, 232, 235, 239, 241, 244, 246, 248, 250, 251, 252, 253, 253
+	.db		254, 253, 253, 252, 251, 250, 248, 246, 244, 241, 239, 235, 232, 229, 225, 221
+	.db		216, 212, 207, 202, 197, 192, 186, 181, 175, 169, 163, 157, 151, 145, 139, 133
+	.db		127, 120, 114, 108, 102, 96, 90, 84, 78, 72, 67, 61, 56, 51, 46, 41
+	.db		37, 32, 28, 24, 21, 18, 14, 12, 9, 7, 5, 3, 2, 1, 0, 0
+	.db		0, 0, 0, 1, 2, 3, 5, 7, 9, 12, 14, 18, 21, 24, 28, 32
+	.db		37, 41, 46, 51, 56, 61, 67, 72, 78, 84, 90, 96, 102, 108, 114, 120
